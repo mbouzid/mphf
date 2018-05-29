@@ -8,6 +8,7 @@
 ## Install
 
 ` make `
+` make clean `
 
 ## Usage
 
