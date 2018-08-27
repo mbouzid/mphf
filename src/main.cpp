@@ -18,14 +18,14 @@ bphf64_t * building_saving_mphf(char * output_hash, const std::vector <uint64_t>
 {
   double btime, etime ;
  
-  std::cout << "building and saving hash" << std::endl;
+  std::cerr << "building and saving hash" << std::endl;
   btime = ticking();
   
   bphf64_t * bphf = build_mphf(kmers,nthreads);
   save_mphf (output_hash,bphf);
   
   etime = ticking();
-  std::cout << "elapsed: " << etime-btime << " s" << std::endl;
+  std::cerr << "elapsed: " << etime-btime << " s" << std::endl;
   return bphf;
 }
 
@@ -34,17 +34,39 @@ int sorting_by_hash (std::vector <uint64_t> & kmers, bphf64_t * bphf)
   double btime, etime ;
  
   auto by_hashkey = [&bphf] (uint64_t a, uint64_t b) { return (bphf->lookup(a) < bphf->lookup(b)); };
-  std::cout << "sorting kmers by hash key" << std::endl; 
+  std::cerr << "sorting kmers by hash key" << std::endl; 
 
   btime = ticking();
   std::sort (kmers.begin(), kmers.end(), by_hashkey);
   etime = ticking();
 
-  std::cout << "elapsed: " << etime-btime << " s" << std::endl;
+  std::cerr << "elapsed: " << etime-btime << " s" << std::endl;
   
   return true;
 }
 
+int save_kmers (const std::vector <uint64_t> & kmers, const char * fname)
+{ 
+  double btime, etime;
+
+  long unsigned int nelem = kmers.size();
+  sdsl::int_vector<64> mers(nelem);
+
+  for (long unsigned int i = 0; i < nelem; ++i)
+  {
+    mers[i] = kmers.at(i);
+  }
+
+  sdsl::vlc_vector <sdsl::coder::fibonacci> encoded (mers); 
+
+//  std::find(encoded.begin(), encoded.end(), 42);
+  std::ofstream foutput_kmers (fname);
+  encoded.serialize(foutput_kmers);
+
+  foutput_kmers.close(); 
+  
+  return true;
+}
 
 
 
@@ -52,38 +74,46 @@ int index (int argc, char * argv [])
 {
   if ( argc < 3 )
   {
-    std::cerr << argv[0] << " <input_counts> <output_hash> <output_counts> " << std::endl;
+    std::cerr << argv[0] << " <input_counts> <output_hash> <output_counts> <compress:y/n>" << std::endl;
     exit(EXIT_FAILURE);
   }
 
   char * input_counts = argv [1];	    // input matrix counts
   char * output_hash = argv [2];	    // output mphf
   char * output_counts = argv[3];	    // output matrix counts
+  bool compress = ( (strcmp(argv[4],"y")==0) ? true : false);
+  
 
   std::vector <uint64_t> kmers;		    // vector of kmers for building the mphf
   size_t nsamples;
   double btime, etime ;
- 
+  long unsigned int nelem; 
+
   std::ifstream finput_counts (input_counts);
   std::string line;
 
   std::getline(finput_counts,line);	    // get header
   nsamples = split(line).size() -1;    // number of samples = number of elements in header -1 (tag)
-  std::cout << "nsamples=" << nsamples << std::endl;
-  std::cout << "loading kmers & offsets, saving counts" << std::endl;
+  std::cerr << "nsamples=" << nsamples << std::endl;
+  std::cerr << "loading kmers & offsets, saving counts" << std::endl;
   btime = ticking();
   
   std::string tmp("tmp_"+std::string(output_counts));
+  std::string kmers_output("kmers_"+std::string(output_counts));
   sdsl::int_vector_buffer <> counts(tmp,std::ios::out);
+  
   
   
   long unsigned int i = 0;
   std::map <uint64_t, uint64_t> idx;
+
+  
+
   while ( std::getline(finput_counts,line) )
   { 
     std::vector <std::string> row (split(line)); 
     uint64_t i_kmer = str_to_int(row.at(0).c_str(),kmer_length);
-    
+   
     for (size_t j = 0; j < nsamples; ++j)
     {
       counts[(i*nsamples)+j] = std::stoll(row.at(j+1));
@@ -91,7 +121,7 @@ int index (int argc, char * argv [])
         
     kmers.push_back(i_kmer);
     idx.emplace(i_kmer,i);
-
+  
     ++i;
   }
     
@@ -100,13 +130,19 @@ int index (int argc, char * argv [])
   counts.close(); 
 
   etime = ticking();
-  std::cout << "elapsed: " << etime-btime << " s" << std::endl;
+  std::cerr << "elapsed: " << etime-btime << " s" << std::endl;
+
+  nelem = kmers.size();
 
   bphf64_t * bphf = building_saving_mphf(output_hash,kmers);
   sorting_by_hash(kmers,bphf); 
   delete bphf;
+  
+  
+  std::cerr << "saving kmers " << std::endl;
+  save_kmers(kmers,kmers_output.c_str());
 
-  std::cout << "loading counts into vlc_vector" << std::endl;
+  std::cerr << "loading counts into vlc_vector" << std::endl;
   btime = ticking();
   
    
@@ -115,118 +151,181 @@ int index (int argc, char * argv [])
   input_tmp.close();
   etime = ticking();
 
-  std::cout << "elapsed: " << etime-btime << "s" << std::endl;
+  std::cerr << "elapsed: " << etime-btime << "s" << std::endl;
 
-  std::cout << "permutates counts" << std::endl;
+  std::cerr << "permutates counts" << std::endl;
 
   std::string tmp1 ("tmp1_"+std::string(output_counts));
   sdsl::int_vector_buffer <> output_tmp (tmp1,std::ios::out); 
   
   btime = ticking();
-  long unsigned int sz = kmers.size();
-  for (size_t l = 0; l < sz; ++l)
+
+  
+  
+  for (size_t l = 0; l < nelem; ++l)
   {
-    size_t m = idx.at(kmers.at(l));
-    idx.erase(kmers.at(l));
+    long unsigned int m = idx.at(kmers.at(l)); 
     for (size_t j = 0; j < nsamples; ++j)
     {
       output_tmp[(l*nsamples)+j] = input_tmp_vlc[(m*nsamples)+j]; 
     } 
-
-    if ( (l+1) % trace_sz == 0 )
-    {
-      etime = ticking();
-     
-      std::cout << (l+1) << "/" << sz << std::endl;
-      std::cout << "elapsed:" << etime-btime << "s" << std::endl;
-      
-      btime = ticking();
-    }
+  
 
   }
   output_tmp.close();
-
-  etime = ticking();
-  std::cout << "elapsed: " << etime-btime << "s" << std::endl;
-
-  std::cout << "writing as vlc_vector" << std::endl;
-  btime = ticking();
-
-  sdsl::int_vector_buffer <> input_output_tmp (tmp1,std::ios::in);
-  std::ofstream foutput_counts (output_counts);
-  sdsl::vlc_vector < sdsl::coder::fibonacci > encoded_counts(input_output_tmp); 
-  input_output_tmp.close();
-
-  encoded_counts.serialize(foutput_counts);
-
-  foutput_counts.close();
     
+
+
   etime = ticking();
+  std::cerr << "elapsed: " << etime-btime << "s" << std::endl;
 
- 
+  input_tmp_vlc = sdsl::vlc_vector<sdsl::coder::fibonacci>();
 
-  std::cout << "elapsed: " << etime-btime << " s" << std::endl;
-  return (EXIT_SUCCESS);
-
-}
-int query_buffer(int argc, char * argv [])
-{ 
-  if ( argc < 4 )
+  if (compress)
   {
-    std::cerr << argv[0] << " <input_counts_buffer> <input_hash> <kmer> <nsamples>" << std::endl;
-    exit(EXIT_FAILURE);
+    std::cerr << "writing as vlc_vector" << std::endl;
+    btime = ticking();
+
+    sdsl::int_vector_buffer <> input_output_tmp (tmp1,std::ios::in);
+    std::ofstream foutput_counts (output_counts);
+    sdsl::vlc_vector < sdsl::coder::fibonacci > encoded_counts (input_output_tmp); 
+    input_output_tmp.close();
+
+    encoded_counts.serialize(foutput_counts);
+
+    foutput_counts.close();
+    
+    etime = ticking();
+
+    std::cerr << "elapsed: " << etime-btime << " s" << std::endl;
   }
-
-  char * input_counts = argv[1];
-  char * input_hash = argv[2];
-  char * kmer = argv[3];
-  size_t nsamples = atoi(argv[4]);
-
-  uint64_t i_kmer = str_to_int(kmer,kmer_length);
-
-  bphf64_t * bphf = load_mphf(input_hash);
-
-  uint64_t key = bphf->lookup(i_kmer);
-  if ( key >= bphf->size() )
+  else
   {
-    std::cerr << kmer << " not_found" << std::endl;
-    exit(EXIT_FAILURE);
-  }
-  delete bphf;
+    std::cerr << "writing as uint32_t" << std::endl;
+
+    btime = ticking();
+
+    std::ofstream foutput_counts (output_counts,std::ios::binary);
+    sdsl::int_vector_buffer <> input_output_tmp (tmp1,std::ios::in);
+   
+    for(long unsigned int i = 0; i < nelem; ++i)
+    { 
+      uint32_t * cnts = (uint32_t*)calloc(nsamples,sizeof(uint32_t));
+      
+      for(size_t j = 0; j < nsamples; ++j)
+      {
+	cnts[j] = (uint32_t)input_output_tmp[(i*nsamples)+j];
+      }
+      
+
+      foutput_counts.write(reinterpret_cast<const char *>(cnts),sizeof(uint32_t)*nsamples);  
+      free(cnts);
+    }
+   
+    foutput_counts.close();
+    input_output_tmp.close();
+
+    etime = ticking();
   
-  sdsl::int_vector_buffer <> counts(std::string(input_counts),std::ios::in);
-
-  std::cout << "key=" << key << std::endl; 
-  for (size_t j = 0; j < nsamples; ++j)
-  {
-    std::cout << counts[(key*nsamples)+j] << " ";
+    std::cerr << "elapsed: " << etime-btime << " s" << std::endl;
   }
-
-  std::cout << std::endl;
-  counts.close();
-
+ 
+  remove(tmp.c_str());
+  remove(tmp1.c_str());
   return (EXIT_SUCCESS);
+
 }
 
 
 
+int find (int argc, char * argv [])
+{
+  if ( argc < 2 )
+  {
+    std::cerr << argv[0] << " <input_kmers> <kmer>" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  
+  char * input_kmers = argv[1];
+  char * kmer = argv[2];
+  double btime, etime;
+
+  std::cout << "loading vlc_vector" << std::endl;
+  btime = ticking();
+  sdsl::vlc_vector <sdsl::coder::fibonacci> kmers;
+  std::ifstream finput_kmers (input_kmers);
+  kmers.load(finput_kmers);
+  finput_kmers.close();
+  etime = ticking();
+  std::cout << "elapsed: " << etime-btime << "s"<< std::endl;
+  bool found = ( std::find(kmers.begin(),kmers.end(),str_to_int(kmer,kmer_length)) != kmers.end() );
+  std::cout << kmer << "\t" << ( found ? "found" : "not_found" ) << std::endl;
+  
+  return (EXIT_SUCCESS);
+}
+
+
+int find_some(int argc, char * argv [])
+{
+  if ( argc < 2 )
+  {
+    std::cerr << argv[0] << " <input_kmers> <input_kmers_list>" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  
+  char * input_kmers = argv[1];
+  char * input_kmers_list = argv[2];
+  double btime, etime;
+
+  std::cout << "loading vlc_vector" << std::endl;
+  
+  btime = ticking();
+  sdsl::vlc_vector <sdsl::coder::fibonacci> kmers;
+  std::ifstream finput_kmers (input_kmers);
+  kmers.load(finput_kmers);
+  finput_kmers.close();
+  etime = ticking();
+  
+  std::ifstream finput_kmers_list (input_kmers_list);
+  std::string line;
+  std::vector <std::string> kmers_list;
+  while (std::getline(finput_kmers_list,line))
+  {
+    kmers_list.push_back(line);
+  }
+  finput_kmers_list.close();
+
+  for (const auto & kmer : kmers_list)
+  {
+    bool found = ( std::find(kmers.begin(),kmers.end(),str_to_int(kmer.c_str(),kmer_length)) != kmers.end() );
+    std::cout << kmer << "\t" << ( found ? "found" : "not_found" ) << std::endl;
+  }
+
+  return (EXIT_SUCCESS);
+}
 
 int query (int argc, char * argv [])
 { 
   if ( argc < 4 )
   {
-    std::cerr << argv[0] << " <input_counts> <input_hash> <kmer> <nsamples>" << std::endl;
+    std::cerr << argv[0] << " <input_counts> <input_hash> <nsamples> <kmer>" << std::endl;
     exit(EXIT_FAILURE);
   }
 
   char * input_counts = argv[1];
   char * input_hash = argv[2];
-  char * kmer = argv[3];
-  size_t nsamples = atoi(argv[4]);
+  size_t nsamples = atoi(argv[3]);
+  char * kmer = argv[4];
 
+  double btime, etime;
   uint64_t i_kmer = str_to_int(kmer,kmer_length);
 
+  std::cout << "loading hash" << std::endl;
+  btime = ticking();
   bphf64_t * bphf = load_mphf(input_hash);
+  etime = ticking();
+
+  std::cout << "elapsed: " << etime-btime << "s" << std::endl;
 
   uint64_t key = bphf->lookup(i_kmer);
   if ( key >= bphf->size() )
@@ -236,10 +335,13 @@ int query (int argc, char * argv [])
   }
   delete bphf;
   
+  std::cout << "loading vlc_vector" << std::endl;
+  btime = ticking();
   sdsl::vlc_vector <sdsl::coder::fibonacci> counts;
   std::ifstream finput_counts (input_counts);
   counts.load(finput_counts);
   finput_counts.close();
+  etime = ticking();
 
   std::cout << "key=" << key << std::endl; 
   for (size_t j = 0; j < nsamples; ++j)
@@ -248,6 +350,7 @@ int query (int argc, char * argv [])
   }
 
   std::cout << std::endl;
+  std::cout << "elapsed: " << etime-btime << "s" << std::endl;
 
   return (EXIT_SUCCESS);
 }
@@ -256,7 +359,7 @@ int queries (int argc, char * argv [])
 { 
   if ( argc < 4 )
   {
-    std::cerr << argv[0] << " <input_counts> <input_hash> <kmer> <nsamples>" << std::endl;
+    std::cerr << argv[0] << " <input_counts> <input_hash> <kmers> <nsamples>" << std::endl;
     exit(EXIT_FAILURE);
   }
 
@@ -282,6 +385,8 @@ int queries (int argc, char * argv [])
   }
   finput_kmers.close();
   etime = ticking();
+  
+  std::random_shuffle(kmers.begin(),kmers.end());
 
   std::cout << "elapsed: " << etime-btime << "s" << std::endl;
   
@@ -327,43 +432,150 @@ int queries (int argc, char * argv [])
   return (EXIT_SUCCESS);
 }
 
-int as_vlc (int argc, char * argv [])
+int query_disk (int argc, char * argv [])
 {
-  if ( argc < 2 )
+  if (argc < 2)
   {
-    std::cerr << argv[0] << " <input counts buffer> <output vlc > " << std::endl;
+    std::cerr << argv[0] << " <input_count> <input_hash> <ncol> <k-mer>" << std::endl;
     exit(EXIT_FAILURE);
   }
+  
+  char * input_counts = argv[1];
+  char * input_hash = argv[2];
+  size_t ncol = atoi(argv[3]);
+  char * kmer = argv[4];
+  
 
-  char * input_buffer = argv[1];
-  char * output_counts = argv[2];
+  double btime, etime;
 
-
-  double btime, etime ;
-
-  std::cout << "vlc_vector from int_vector_buffer" << std::endl;
+  std::cout << "loading hash" << std::endl;
   btime = ticking();
-  sdsl::int_vector_buffer <> finput_buffer (std::string(input_buffer),std::ios::in);
-  sdsl::vlc_vector < sdsl::coder::fibonacci > encoded_counts(finput_buffer); 
-  etime = ticking();
-  std::cout << "elapsed: " << etime-btime << "s" << std::endl;
-  
-  std::cout << "serialization " << std::endl;
-  std::ofstream foutput_counts (output_counts,std::ios::binary);
-  encoded_counts.serialize(foutput_counts);
-  foutput_counts.close();
-    
-  etime = ticking(); 
 
-  std::cout << "elapsed: " << etime-btime << " s" << std::endl;
- 
+  bphf64_t * bphf = load_mphf(input_hash); 
   
+  etime = ticking();
+  std::cout << "elapsed: " << etime-btime << "s" << std::endl; 
+
+  uint64_t key = bphf->lookup(str_to_int(kmer,kmer_length));
+  delete bphf;
+
+  std::ifstream finput_counts (input_counts,std::ios::binary);  
+  off_t sz = sizeof(uint32_t)*ncol;
+  finput_counts.seekg(key*sz);
+  uint32_t * counts = (uint32_t*)calloc(ncol,sizeof(uint32_t));
+  finput_counts.read (reinterpret_cast <char *> (counts),sizeof(uint32_t)*ncol);
+  finput_counts.close();
+
+  std::cout << kmer ;
+  for (size_t i = 0; i < ncol; ++i)
+  {
+    std::cout << "\t" << counts[i] ;
+  }
+  std::cout << std::endl;
+
+  free(counts);
+  
+  return (EXIT_SUCCESS);
 
 }
 
 
+int queries_disk (int argc, char * argv [])
+{
+  if (argc < 4)
+  {
+    std::cerr << argv[0] << " <input_count> <input_hash> <ncol> <input_tags>" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  
+  char * input_counts = argv[1];
+  char * input_hash = argv[2];
+  size_t ncol = atoi(argv[3]);
+  char * input_tags = argv[4];
+  
+
+  double btime, etime;
+
+  std::cout << "loading hash" << std::endl;
+  btime = ticking();
+
+  bphf64_t * bphf = load_mphf(input_hash); 
+  
+  etime = ticking();
+  std::cout << "elapsed: " << etime-btime << "s" << std::endl; 
+
+  std::cout << "loading tags" << std::endl;
+  btime = ticking();
+  std::vector <uint64_t> kmers;
+
+  std::ifstream finput_tags (input_tags);
+  std::string line;
+  while ( finput_tags >> line )
+  {
+    uint64_t i_kmer = str_to_int(line.c_str(),kmer_length);
+    kmers.push_back(i_kmer);
+  }
+
+  finput_tags.close();
+  etime = ticking();
+  
+  std::cout << "elapsed: " << etime-btime << "s" << std::endl; 
+
+
+  std::ifstream finput_counts (input_counts,std::ios::binary);  
+  
+  off_t sz = sizeof(uint32_t)*ncol;
+  long unsigned int bphfsz = bphf->size();
+  
+  btime = ticking();
+  for (uint64_t i_kmer : kmers)
+  {
+    uint64_t key = bphf->lookup(i_kmer);
+    if ( key <= ULLONG_MAX )
+    {
+      finput_counts.seekg(key*sz);
+      uint32_t * counts = (uint32_t*)malloc(sizeof(uint32_t)*ncol);
+      finput_counts.read (reinterpret_cast <char *> (counts),sizeof(uint32_t)*ncol);
+
+      std::cout << int_to_str(i_kmer) ;
+      for (size_t i = 0; i < ncol; ++i)
+      {
+	std::cout << "\t" << (uint32_t)counts[i] ;
+      }
+      std::cout << std::endl;
+    
+      free(counts);
+    }
+  }
+  finput_counts.close();
+  
+  etime = ticking();
+  std::cout << "elapsed: " << etime-btime << "s" << std::endl; 
+
+
+
+  delete bphf;
+  return (EXIT_SUCCESS);
+
+}
+
+
+
 int main (int argc, char * argv [])
 {
+  srand(time(NULL));
+  
+  if (argc < 2)
+  {
+    std::cerr << "**-" << argv[0] << "-**"<< std::endl;
+    std::cerr << "Usage:" << std::endl;
+    std::cerr << "\tindex\t<input_counts> <output_hash> <output_counts> <compress:y/n>" << std::endl;
+    std::cerr << "\tquery/query_disk\t <input_counts> <input_hash> <kmer> <nsamples>" << std::endl;
+    std::cerr << "\tqueries/queries_disk\t <input_counts> <input_hash> <kmers> <nsamples>" << std::endl;
+    std::cerr << "\tfind\t<input_kmers> <kmer> " << std::endl;
+    std::cerr << "\tfind_some\t<input_kmers> <kmers_list> " << std::endl;
+    exit(EXIT_FAILURE);
+  }
 
   if ( strcmp(argv[1],"index") == 0)
     return index(argc-1,argv+1);
@@ -371,9 +583,13 @@ int main (int argc, char * argv [])
     return query(argc-1,argv+1);
   else if ( strcmp(argv[1],"queries") == 0)
     return queries(argc-1,argv+1);
-  else if ( strcmp(argv[1],"as_vlc") == 0)
-    return as_vlc (argc-1,argv+1);
-  else if ( strcmp(argv[1],"query_buffer") == 0)
-    return query_buffer(argc-1,argv+1);
+  else if ( strcmp(argv[1],"query_disk") == 0)	
+    return query_disk(argc-1,argv+1);
+  else if ( strcmp (argv[1],"queries_disk") == 0)
+    return queries_disk(argc-1,argv+1);
+  else if ( strcmp(argv[1],"find") == 0)
+    return find(argc-1,argv+1);
+  else if ( strcmp(argv[1],"find_some") == 0)
+    return find_some(argc-1,argv+1);
   return (EXIT_SUCCESS);
 }
