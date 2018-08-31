@@ -5,7 +5,7 @@
 - sdsl-lite (git clone https://github.com/simongog/sdsl-lite.git)
 
 ## Acknowledgment
--  BBHash (github.com/rizkg/BBHash)
+-  BBHash (https://github.com/rizkg/BBHash)
 
 ## Install
 
