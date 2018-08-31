@@ -10,7 +10,7 @@ OFLAGS	= -O2 -funroll-loops
 
 OBJ	= obj/main.o  obj/tools.o
 	  
-TGT	= bin/sdsl-index
+TGT	= bin/mphf
 
 ## building rule
 
