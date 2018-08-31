@@ -17,16 +17,20 @@
   ` ./bin/mphf index [counts.tsv] [hash.bin] [counts.bin] y`
 
 - file format for [counts.tsv] 
-` tag  sample1 ... sampleM
+ ```
+  tag  sample1 ... sampleM
   <kmer1>  abundance11  ... abundance1M
     ...
-  <kmerN> abundanceN1 ... abundanceNM`
+  <kmerN> abundanceN1 ... abundanceNM
+  ```
   
   e.g. 
-  `tag  sample1 sample2 sample3 sample4
+  ```
+  tag  sample1 sample2 sample3 sample4
   AAAAAAAAAAAAAAAAAAAAAAAAAAATTAT	12  78	11  91
   CAAAAAAAAAAAAAAAAAAAAAAAAAAAATA	59  22	14  78
-  CCCTAAAAAAAAAAAAAAAAAAAAAAAAAAT	31  52	11  0`
+  CCCTAAAAAAAAAAAAAAAAAAAAAAAAAAT	31  52	11  0
+  ```
 
 - querying k-mer 
   ` ./bin/mphf query [counts.bin] [hash.bin] <number of samples> <k-mer>`
